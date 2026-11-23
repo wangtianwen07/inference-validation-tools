@@ -16,9 +16,11 @@ def positive(value):
 
 
 def finite_number(value, label):
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be a finite number")
     try:
         value = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{label} must be a finite number") from exc
     if not math.isfinite(value):
         raise ValueError(f"{label} must be a finite number")

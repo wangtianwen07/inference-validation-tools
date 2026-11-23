@@ -2,6 +2,10 @@
 import csv
 import json
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 import validate
 
@@ -37,16 +41,50 @@ class ValidationTests(unittest.TestCase):
 
     def test_non_numeric_check_values_rejected(self):
         records=json.loads((CASE/"checks.json").read_text())
-        for field in ("worst_tol","bitwise_repeats"):
-            with self.subTest(field=field):
-                record=next(r for r in records if r.get("numeric"))
-                original=record[field]
-                record[field]="not-a-number"
-                try:
-                    with self.assertRaises(ValueError):
-                        validate.check_report(records,[0,1])
-                finally:
-                    record[field]=original
+        for field in ("worst_tol","negative_tol","bitwise_repeats"):
+            for value in ("not-a-number", None, [], {}, True, False):
+                with self.subTest(field=field, value=value):
+                    record=next(r for r in records if r.get("numeric"))
+                    original=record[field]
+                    record[field]=value
+                    try:
+                        with self.assertRaisesRegex(ValueError, field):
+                            validate.check_report(records,[0,1])
+                    finally:
+                        record[field]=original
+
+    def test_check_numeric_boundaries_rejected(self):
+        records=json.loads((CASE/"checks.json").read_text())
+        for field, values in (("worst_tol", (-0.1, 1.1, float("nan"), float("inf"))),
+                              ("bitwise_repeats", (0, 1, 2.5, "2"))):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    record=next(r for r in records if r.get("numeric"))
+                    original=record[field]
+                    record[field]=value
+                    try:
+                        with self.assertRaises(ValueError):
+                            validate.check_report(records,[0,1])
+                    finally:
+                        record[field]=original
+
+    def test_malformed_checks_cli_has_no_traceback_or_output(self):
+        with tempfile.TemporaryDirectory() as root:
+            case=Path(root)/"case"
+            shutil.copytree(CASE, case)
+            for field in ("worst_tol", "bitwise_repeats"):
+                with self.subTest(field=field):
+                    records=json.loads((CASE/"checks.json").read_text())
+                    next(r for r in records if r.get("numeric"))[field]=None
+                    (case/"checks.json").write_text(json.dumps(records), encoding="utf-8")
+                    output=Path(root)/"result.json"
+                    result=subprocess.run([sys.executable, str(Path(validate.__file__)),
+                                           "analyze", str(case), "--output", str(output)],
+                                          capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(field, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertFalse(output.exists())
 
     def test_interval_union_avoids_double_counting(self):
         self.assertEqual(validate.union_ms([(1,5),(3,7),(7,9)]),8)
